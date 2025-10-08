@@ -1,0 +1,24 @@
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Check formatting
+        run: cargo fmt -- --check
+      - name: Lint with clippy
+        run: cargo clippy --workspace -- -D warnings
+      - name: Build all crates
+        run: cargo build --workspace --verbose --release
+      - name: Run all labs
+        run: |
+          for crate in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
+            echo "Running $crate..."
+            cargo run -p "$crate" --release
+          done
+#      - name: Run all tests
+#        run: cargo test --workspace --verbose --release
