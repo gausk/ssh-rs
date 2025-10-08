@@ -1,0 +1,11 @@
+[workspace]
+members = ["ssh2-test"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+authors = ["Gaurav Kumar <gauravsingh12341@gmail.com>"]
+description = "SSH rust implementation."
+
+[workspace.dependencies]
+anyhow = "1.0.100"
