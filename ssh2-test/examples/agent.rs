@@ -1,5 +1,5 @@
-use ssh2::Session;
 use anyhow::Result;
+use ssh2::Session;
 
 fn main() -> Result<()> {
     let sess = Session::new()?;

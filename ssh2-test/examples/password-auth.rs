@@ -1,7 +1,7 @@
-use std::env;
-use std::net::TcpStream;
 use anyhow::Result;
 use ssh2::Session;
+use std::env;
+use std::net::TcpStream;
 
 fn main() -> Result<()> {
     let args = env::args().collect::<Vec<_>>();
@@ -14,6 +14,9 @@ fn main() -> Result<()> {
     sess.set_tcp_stream(stream);
     sess.handshake()?;
     sess.userauth_password("gautamkumar", args[1].as_str())?;
-    println!("Password based authentication result: {}", sess.authenticated());
+    println!(
+        "Password based authentication result: {}",
+        sess.authenticated()
+    );
     Ok(())
 }

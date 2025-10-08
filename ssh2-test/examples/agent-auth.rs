@@ -1,6 +1,6 @@
-use std::net::TcpStream;
 use anyhow::Result;
 use ssh2::Session;
+use std::net::TcpStream;
 
 fn main() -> Result<()> {
     let stream = TcpStream::connect("127.0.0.1:22")?;
