@@ -1,4 +1,5 @@
-use crate::kex::{KexEcdhInitMsg, KexEcdhReplyMsg};
+use crate::auth::ServiceRequestType;
+use crate::kex::{DerivedKeys, KexEcdhInitMsg, KexEcdhReplyMsg};
 use anyhow::{Result, bail};
 use num_enum::TryFromPrimitive;
 use rand::{Rng, rng};
@@ -153,6 +154,10 @@ impl SSHPacket {
         })
     }
 
+    pub fn from_encrypted_bytes(data: &[u8], all_keys: &DerivedKeys, seq_no: u32) -> Result<Self> {
+        Self::from_bytes(data)
+    }
+
     pub fn from_payload(payload: SSHPacketData) -> Self {
         let payload_bytes = payload.to_bytes();
         let payload_len = payload_bytes.len();
@@ -183,6 +188,10 @@ impl SSHPacket {
         output
     }
 
+    pub fn to_encrypted_bytes(self, all_keys: &DerivedKeys, seq_no: u32) -> Vec<u8> {
+        self.to_bytes()
+    }
+
     fn len(&self) -> usize {
         4 + self.packet_length as usize + self.mac.len()
     }
@@ -194,6 +203,8 @@ pub enum SSHPacketData {
     SshMsgKexEcdhInit(KexEcdhInitMsg),
     SshMsgKexEcdhReply(KexEcdhReplyMsg),
     SshMsgNewKeys,
+    SshMsgServiceRequest(ServiceRequestType),
+    SshMsgServiceAccept(ServiceRequestType),
 }
 
 impl SSHPacketData {
@@ -211,6 +222,12 @@ impl SSHPacketData {
                 SSHPacketData::SshMsgKexEcdhReply(KexEcdhReplyMsg::from_bytes(&data[1..])?)
             }
             SSHPacketType::SshMsgNewKeys => SSHPacketData::SshMsgNewKeys,
+            SSHPacketType::SshMsgServiceRequest => {
+                SSHPacketData::SshMsgServiceRequest(serde_json::from_slice(&data[1..])?)
+            }
+            SSHPacketType::SshMsgServiceAccept => {
+                SSHPacketData::SshMsgServiceAccept(serde_json::from_slice(&data[1..])?)
+            }
         })
     }
 
@@ -220,6 +237,18 @@ impl SSHPacketData {
             SSHPacketData::SshMsgKexEcdhInit(packet) => packet.to_bytes(),
             SSHPacketData::SshMsgKexEcdhReply(_) => unreachable!(),
             SSHPacketData::SshMsgNewKeys => vec![SSHPacketType::SshMsgNewKeys as u8],
+            SSHPacketData::SshMsgServiceRequest(typ) => {
+                let mut data = Vec::new();
+                data.push(SSHPacketType::SshMsgServiceRequest as u8);
+                data.extend(serde_json::to_vec(typ).unwrap());
+                data
+            }
+            SSHPacketData::SshMsgServiceAccept(typ) => {
+                let mut data = Vec::new();
+                data.push(SSHPacketType::SshMsgServiceAccept as u8);
+                data.extend(serde_json::to_vec(typ).unwrap());
+                data
+            }
         }
     }
 
@@ -228,7 +257,9 @@ impl SSHPacketData {
             SSHPacketData::SshMsgKexEcdhReply(x) => x,
             SSHPacketData::SshMsgKexInit(_)
             | SSHPacketData::SshMsgKexEcdhInit(_)
-            | SSHPacketData::SshMsgNewKeys => unreachable!(),
+            | SSHPacketData::SshMsgNewKeys
+            | SSHPacketData::SshMsgServiceRequest(_)
+            | SSHPacketData::SshMsgServiceAccept(_) => unreachable!(),
         }
     }
 }
@@ -236,6 +267,8 @@ impl SSHPacketData {
 #[derive(Debug, Clone, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum SSHPacketType {
+    SshMsgServiceRequest = 5,
+    SshMsgServiceAccept = 6,
     SshMsgKexInit = 20,
     SshMsgNewKeys = 21,
     SshMsgKexEcdhInit = 30,

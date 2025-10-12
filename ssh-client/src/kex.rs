@@ -276,6 +276,8 @@ impl DerivedKeys {
         let mac_key_len = 32;
         // aes128-gcm@openssh.com
         let key_len = 16;
+        // expected 12 bit for iv
+        // last 4 bit will be added from the sequence number
         let iv_len = 8;
 
         DerivedKeys {
