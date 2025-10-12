@@ -1,9 +1,12 @@
 use crate::auth::ServiceRequestType;
 use crate::kex::{DerivedKeys, KexEcdhInitMsg, KexEcdhReplyMsg};
+use aes_gcm::aead::Aead;
+use aes_gcm::{AeadInPlace, Aes128Gcm, Key, KeyInit, Nonce};
 use anyhow::{Result, bail};
 use num_enum::TryFromPrimitive;
 use rand::{Rng, rng};
 use tracing::info;
+use tracing_subscriber::fmt::FormatFields;
 
 /// Binary Packet Protocol
 ///
@@ -158,12 +161,28 @@ impl SSHPacket {
         Self::from_bytes(data)
     }
 
-    pub fn from_payload(payload: SSHPacketData) -> Self {
+    pub fn from_payload(payload: SSHPacketData, is_encrypted: bool) -> Self {
         let payload_bytes = payload.to_bytes();
         let payload_len = payload_bytes.len();
-        let mut padding_length = 8 - ((payload_len + 1 + 4) % 8); // +1 for padding_length byte
-        if padding_length < 4 {
-            padding_length += 8; // min padding 4
+        let block_size = 16;
+        let include_packet_length = if is_encrypted {
+            // RFC 5647
+            // the random_padding MUST be at least 4 octets in length but no more than 255 octets.
+            // The total length of the PT MUST be a multiple of 16 octets (the block size of AES).
+            // PT (padding length + payload + padding)
+            0
+        } else {
+            // Note that the length of the concatenation of 'packet_length',
+            // 'padding_length', 'payload', and 'random padding' MUST be a multiple
+            // of the cipher block size or 8, whichever is larger
+            4
+        };
+        // +1 for padding_length byte
+        // +4 for packet_length
+        let mut padding_length =
+            block_size - ((payload_len + 1 + include_packet_length) % block_size);
+        if padding_length < block_size {
+            padding_length += block_size; // min padding 4
         }
         let packet_length = (payload_len + 1 + padding_length) as u32;
         let mut padding = vec![0u8; padding_length];
@@ -188,8 +207,37 @@ impl SSHPacket {
         output
     }
 
-    pub fn to_encrypted_bytes(self, all_keys: &DerivedKeys, seq_no: u32) -> Vec<u8> {
-        self.to_bytes()
+    /// RFC 5647 (Sec 7.2)
+    /// In AES-GCM secure shell, the inputs to the authenticated encryption are:
+    ///
+    ///      PT (Plain Text)
+    ///         byte      padding_length; // 4 <= padding_length < 256
+    ///         byte[n1]  payload;        // n1 = packet_length-padding_length-1
+    ///         byte[n2]  random_padding; // n2 = padding_length
+    ///      AAD (Additional Authenticated Data)
+    ///         uint32    packet_length;  // 0 <= packet_length < 2^32
+    ///      IV (Initialization Vector)
+    ///         As described in section 7.1.
+    ///      BK (Block Cipher Key)
+    ///         The appropriate Encryption Key formed during the Key Exchange.
+    ///
+    /// As required in [RFC4253], the random_padding MUST be at least 4
+    /// octets in length but no more than 255 octets.  The total length of
+    /// the PT MUST be a multiple of 16 octets (the block size of AES).  The
+    /// binary packet is the concatenation of the 4-octet packet_length, the
+    /// cipher text (CT), and the 16-octet authentication tag (AT).*/
+    pub fn to_encrypted_bytes(self, all_keys: &DerivedKeys, seq_no: u64) -> Result<Vec<u8>> {
+        let mut data = self.to_bytes();
+        let key = Key::<Aes128Gcm>::from_slice(&all_keys.client_key);
+        let cipher = Aes128Gcm::new(key);
+        let nonce_vec = [all_keys.client_iv.as_slice(), &seq_no.to_be_bytes()].concat();
+        let nonce = Nonce::from_slice(nonce_vec.as_slice());
+        let aad = data[..4].to_vec();
+        let tag = cipher
+            .encrypt_in_place_detached(nonce, &aad, &mut data[4..])
+            .unwrap();
+        data.extend(tag);
+        Ok(data)
     }
 
     fn len(&self) -> usize {

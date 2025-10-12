@@ -122,7 +122,7 @@ pub fn calculate_shared_secret(
 ///
 /// For ecdh-sha2-nistp256, the hash function HASH is SHA-256.
 #[allow(clippy::too_many_arguments)]
-pub fn calcualte_exchange_hash(
+pub fn calculate_exchange_hash(
     cl_ident: &[u8],
     sr_ident: &[u8],
     cl_kexinit_payload: &[u8],
@@ -142,7 +142,7 @@ pub fn calcualte_exchange_hash(
         cl_ephemeral_pubkey,
         sr_ephemeral_pubkey,
     ] {
-        data.extend((data.len() as u32).to_be_bytes());
+        data.extend((req.len() as u32).to_be_bytes());
         data.extend_from_slice(req);
     }
     data.extend(encode_mpint(shared_secret));
@@ -229,12 +229,12 @@ pub fn encode_mpint(shared_secret: &SharedSecret) -> Vec<u8> {
 /// larger than the internal state size of HASH.
 #[derive(Debug, Clone)]
 pub struct DerivedKeys {
-    client_iv: Vec<u8>,
-    server_iv: Vec<u8>,
-    client_key: Vec<u8>,
-    server_key: Vec<u8>,
-    client_mac: Vec<u8>,
-    server_mac: Vec<u8>,
+    pub(crate) client_iv: Vec<u8>,
+    pub(crate) server_iv: Vec<u8>,
+    pub(crate) client_key: Vec<u8>,
+    pub(crate) server_key: Vec<u8>,
+    pub(crate) client_mac: Vec<u8>,
+    pub(crate) server_mac: Vec<u8>,
 }
 
 /// label is a single ASCII byte (b'A'..b'F').
@@ -276,9 +276,16 @@ impl DerivedKeys {
         let mac_key_len = 32;
         // aes128-gcm@openssh.com
         let key_len = 16;
-        // expected 12 bit for iv
-        // last 4 bit will be added from the sequence number
-        let iv_len = 8;
+        // RFC 5647(Sec 7.1)
+        // With AES-GCM, the 12-octet IV is broken into two fields: a 4-octet
+        //    fixed field and an 8-octet invocation counter field.  The invocation
+        //    field is treated as a 64-bit integer and is incremented after each
+        //    invocation of AES-GCM to process a binary packet.
+        //
+        //          uint32  fixed;                  // 4 octets
+        //          uint64  invocation_counter;     // 8 octets
+        //
+        let iv_len = 4;
 
         DerivedKeys {
             client_iv: derive_key(shared_secret, h, b'A', session_id, iv_len),
