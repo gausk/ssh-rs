@@ -157,7 +157,7 @@ impl SSHPacket {
         })
     }
 
-    pub fn from_encrypted_bytes(data: &[u8], all_keys: &DerivedKeys, seq_no: u32) -> Result<Self> {
+    pub fn from_encrypted_bytes(data: &[u8], all_keys: &DerivedKeys, seq_no: u64) -> Result<Self> {
         Self::from_bytes(data)
     }
 
@@ -181,7 +181,7 @@ impl SSHPacket {
         // +4 for packet_length
         let mut padding_length =
             block_size - ((payload_len + 1 + include_packet_length) % block_size);
-        if padding_length < block_size {
+        if padding_length < 4 {
             padding_length += block_size; // min padding 4
         }
         let packet_length = (payload_len + 1 + padding_length) as u32;
