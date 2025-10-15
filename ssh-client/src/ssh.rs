@@ -1,8 +1,8 @@
-use crate::auth::ServiceRequestType;
-use crate::kex::{DerivedKeys, KexEcdhInitMsg, KexEcdhReplyMsg};
+use crate::auth::{ServiceRequestType, SshMsgUserAuthRequest};
+use crate::kex::{DerivedKeys, KexEcdhInitMsg, KexEcdhReplyMsg, MAC_VAL_LEN, get_nonce};
 use aes_gcm::aead::Aead;
-use aes_gcm::{AeadInPlace, Aes128Gcm, Key, KeyInit, Nonce};
-use anyhow::{Result, bail};
+use aes_gcm::{AeadInPlace, Aes128Gcm, Key, KeyInit, Nonce, Tag};
+use anyhow::{Result, anyhow, bail};
 use num_enum::TryFromPrimitive;
 use rand::{Rng, rng};
 use tracing::info;
@@ -157,8 +157,35 @@ impl SSHPacket {
         })
     }
 
-    pub fn from_encrypted_bytes(data: &[u8], all_keys: &DerivedKeys, seq_no: u64) -> Result<Self> {
-        Self::from_bytes(data)
+    pub fn from_encrypted_bytes(
+        data: &mut [u8],
+        all_keys: &DerivedKeys,
+        seq_no: u64,
+    ) -> Result<Self> {
+        let packet_length = u32::from_be_bytes(data[..4].try_into()?);
+        let expected_data_len = 4 + packet_length as usize + MAC_VAL_LEN;
+        if expected_data_len != data.len() {
+            bail!(
+                "Encrypted packet length mismatch, expected {} got {}",
+                expected_data_len,
+                data.len()
+            );
+        }
+        let nonce = get_nonce(&all_keys.server_iv, seq_no)?;
+        let nonce = Nonce::from_slice(&nonce);
+        let key = Key::<Aes128Gcm>::from_slice(&all_keys.server_key);
+        let cipher = Aes128Gcm::new(key);
+        let tag = Tag::from_iter(data[expected_data_len - MAC_VAL_LEN..].to_vec());
+        let aad = data[..4].to_vec();
+        cipher
+            .decrypt_in_place_detached(
+                nonce,
+                &aad,
+                &mut data[4..expected_data_len - MAC_VAL_LEN],
+                &tag,
+            )
+            .map_err(|e| anyhow!("Failed to decrypt packet, error: {}", e))?;
+        SSHPacket::from_bytes(data)
     }
 
     pub fn from_payload(payload: SSHPacketData, is_encrypted: bool) -> Self {
@@ -203,7 +230,6 @@ impl SSHPacket {
         output.extend(self.payload.to_bytes());
         output.extend(self.padding);
         output.extend(self.mac);
-        info!("Output packet: {:?}", output);
         output
     }
 
@@ -228,10 +254,10 @@ impl SSHPacket {
     /// cipher text (CT), and the 16-octet authentication tag (AT).*/
     pub fn to_encrypted_bytes(self, all_keys: &DerivedKeys, seq_no: u64) -> Result<Vec<u8>> {
         let mut data = self.to_bytes();
-        let key = Key::<Aes128Gcm>::from_slice(&all_keys.client_key);
+        let key = Key::<Aes128Gcm>::from_slice(all_keys.client_key.as_slice());
         let cipher = Aes128Gcm::new(key);
-        let nonce_vec = [all_keys.client_iv.as_slice(), &seq_no.to_be_bytes()].concat();
-        let nonce = Nonce::from_slice(nonce_vec.as_slice());
+        let nonce = get_nonce(all_keys.client_iv.as_slice(), seq_no)?;
+        let nonce = Nonce::from_slice(&nonce);
         let aad = data[..4].to_vec();
         let tag = cipher
             .encrypt_in_place_detached(nonce, &aad, &mut data[4..])
@@ -253,6 +279,8 @@ pub enum SSHPacketData {
     SshMsgNewKeys,
     SshMsgServiceRequest(ServiceRequestType),
     SshMsgServiceAccept(ServiceRequestType),
+    SshMsgUserAuthRequest(SshMsgUserAuthRequest),
+    SshMsgUserAuthSuccess,
 }
 
 impl SSHPacketData {
@@ -271,11 +299,13 @@ impl SSHPacketData {
             }
             SSHPacketType::SshMsgNewKeys => SSHPacketData::SshMsgNewKeys,
             SSHPacketType::SshMsgServiceRequest => {
-                SSHPacketData::SshMsgServiceRequest(serde_json::from_slice(&data[1..])?)
+                SSHPacketData::SshMsgServiceRequest(ServiceRequestType::from_bytes(&data[1..])?)
             }
             SSHPacketType::SshMsgServiceAccept => {
-                SSHPacketData::SshMsgServiceAccept(serde_json::from_slice(&data[1..])?)
+                SSHPacketData::SshMsgServiceAccept(ServiceRequestType::from_bytes(&data[1..])?)
             }
+            SSHPacketType::SshMsgUserAuthRequest => unreachable!(),
+            SSHPacketType::SshMsgUserAuthSuccess => SSHPacketData::SshMsgUserAuthSuccess,
         })
     }
 
@@ -288,14 +318,18 @@ impl SSHPacketData {
             SSHPacketData::SshMsgServiceRequest(typ) => {
                 let mut data = Vec::new();
                 data.push(SSHPacketType::SshMsgServiceRequest as u8);
-                data.extend(serde_json::to_vec(typ).unwrap());
+                data.extend(typ.to_bytes());
                 data
             }
             SSHPacketData::SshMsgServiceAccept(typ) => {
                 let mut data = Vec::new();
                 data.push(SSHPacketType::SshMsgServiceAccept as u8);
-                data.extend(serde_json::to_vec(typ).unwrap());
+                data.extend(typ.to_bytes());
                 data
+            }
+            SSHPacketData::SshMsgUserAuthRequest(req) => req.to_bytes(),
+            SSHPacketData::SshMsgUserAuthSuccess => {
+                vec![SSHPacketType::SshMsgUserAuthSuccess as u8]
             }
         }
     }
@@ -307,7 +341,9 @@ impl SSHPacketData {
             | SSHPacketData::SshMsgKexEcdhInit(_)
             | SSHPacketData::SshMsgNewKeys
             | SSHPacketData::SshMsgServiceRequest(_)
-            | SSHPacketData::SshMsgServiceAccept(_) => unreachable!(),
+            | SSHPacketData::SshMsgServiceAccept(_)
+            | SSHPacketData::SshMsgUserAuthRequest(_)
+            | SSHPacketData::SshMsgUserAuthSuccess => unreachable!(),
         }
     }
 }
@@ -321,6 +357,8 @@ pub enum SSHPacketType {
     SshMsgNewKeys = 21,
     SshMsgKexEcdhInit = 30,
     SshMsgKexEcdhReply = 31,
+    SshMsgUserAuthRequest = 50,
+    SshMsgUserAuthSuccess = 52,
 }
 
 /// Key exchange begins by each side sending the following packet:

@@ -6,6 +6,12 @@ use rand_core::OsRng;
 use sha2::Digest;
 use sha2::Sha256;
 
+/// hmac-sha2-256
+pub const MAC_KEY_LEN: usize = 32;
+
+/// aes128gcm
+pub const MAC_VAL_LEN: usize = 16;
+
 /// The following is an overview of the key exchange process:
 ///
 /// Client                                                Server
@@ -167,16 +173,20 @@ pub fn calculate_exchange_hash(
 pub fn encode_mpint(shared_secret: &SharedSecret) -> Vec<u8> {
     let secret_raw = shared_secret.raw_secret_bytes().as_slice();
     let mut out = Vec::new();
-    // if MSB is 1
-    if secret_raw[0] & 0x80 != 0 {
-        let len = secret_raw.len() as u32 + 1;
+    let mut i = 0;
+    while i < secret_raw.len() && secret_raw[i] == 0 {
+        i += 1
+    }
+    // If the first non-zero is >= 128, write its length (u32, BE), followed by 0.
+    if secret_raw[i] & 0x80 != 0 {
+        let len = (secret_raw.len() - i + 1) as u32;
         out.extend(len.to_be_bytes());
         out.push(0);
     } else {
-        let len = secret_raw.len() as u32;
+        let len = (secret_raw.len() - i) as u32;
         out.extend(len.to_be_bytes());
     }
-    out.extend_from_slice(secret_raw);
+    out.extend_from_slice(&secret_raw[i..]);
     out
 }
 
@@ -229,12 +239,12 @@ pub fn encode_mpint(shared_secret: &SharedSecret) -> Vec<u8> {
 /// larger than the internal state size of HASH.
 #[derive(Debug, Clone)]
 pub struct DerivedKeys {
-    pub(crate) client_iv: Vec<u8>,
-    pub(crate) server_iv: Vec<u8>,
-    pub(crate) client_key: Vec<u8>,
-    pub(crate) server_key: Vec<u8>,
-    pub(crate) client_mac: Vec<u8>,
-    pub(crate) server_mac: Vec<u8>,
+    pub client_iv: Vec<u8>,
+    pub server_iv: Vec<u8>,
+    pub client_key: Vec<u8>,
+    pub server_key: Vec<u8>,
+    pub client_mac: Vec<u8>,
+    pub server_mac: Vec<u8>,
 }
 
 /// label is a single ASCII byte (b'A'..b'F').
@@ -271,29 +281,40 @@ fn derive_key(
 }
 
 impl DerivedKeys {
+    /// SSH AES-GCM requires a 12-octet Initial IV and
+    /// an encryption key of either 16 or 32 octets.  Because an AEAD
+    /// algorithm such as AES-GCM uses the encryption key to provide both
+    /// confidentiality and data integrity, the integrity key is not used
+    /// with AES-GCM.
     pub fn derive(shared_secret: &SharedSecret, h: &[u8], session_id: &[u8]) -> DerivedKeys {
-        // hmac-sha2-256
-        let mac_key_len = 32;
         // aes128-gcm@openssh.com
         let key_len = 16;
-        // RFC 5647(Sec 7.1)
-        // With AES-GCM, the 12-octet IV is broken into two fields: a 4-octet
-        //    fixed field and an 8-octet invocation counter field.  The invocation
-        //    field is treated as a 64-bit integer and is incremented after each
-        //    invocation of AES-GCM to process a binary packet.
-        //
-        //          uint32  fixed;                  // 4 octets
-        //          uint64  invocation_counter;     // 8 octets
-        //
-        let iv_len = 4;
+        let iv_len = 12;
 
         DerivedKeys {
             client_iv: derive_key(shared_secret, h, b'A', session_id, iv_len),
             server_iv: derive_key(shared_secret, h, b'B', session_id, iv_len),
             client_key: derive_key(shared_secret, h, b'C', session_id, key_len),
             server_key: derive_key(shared_secret, h, b'D', session_id, key_len),
-            client_mac: derive_key(shared_secret, h, b'E', session_id, mac_key_len),
-            server_mac: derive_key(shared_secret, h, b'F', session_id, mac_key_len),
+            client_mac: derive_key(shared_secret, h, b'E', session_id, MAC_KEY_LEN),
+            server_mac: derive_key(shared_secret, h, b'F', session_id, MAC_KEY_LEN),
         }
     }
+}
+
+/// RFC 5647(Sec 7.1)
+/// With AES-GCM, the 12-octet IV is broken into two fields: a 4-octet
+///    fixed field and an 8-octet invocation counter field.  The invocation
+///    field is treated as a 64-bit integer and is incremented after each
+///    invocation of AES-GCM to process a binary packet.
+///
+///          uint32  fixed;                  // 4 octets
+///          uint64  invocation_counter;     // 8 octets
+///
+pub fn get_nonce(iv: &[u8], seq_no: u64) -> Result<Vec<u8>> {
+    let mut nonce = Vec::new();
+    nonce.extend_from_slice(&iv[..4]);
+    let invocation_counter = u64::from_be_bytes(iv[4..].try_into()?).wrapping_add(seq_no);
+    nonce.extend(invocation_counter.to_be_bytes());
+    Ok(nonce)
 }
