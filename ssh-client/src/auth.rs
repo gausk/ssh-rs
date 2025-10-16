@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use crate::ssh::SSHPacketType;
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -106,12 +107,25 @@ impl SshMsgUserAuthRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum AuthMethod {
     Password {
         change_request: bool,
         password: String,
     },
+}
+
+impl Debug for AuthMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthMethod::Password { change_request, .. } => {
+                f.debug_struct("AuthMethod::Password")
+                    .field("change_request", change_request)
+                    .field("password", &"******")
+                    .finish()
+            }
+        }
+    }
 }
 
 impl AuthMethod {

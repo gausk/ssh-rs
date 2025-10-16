@@ -1,4 +1,10 @@
 use crate::auth::{ServiceRequestType, SshMsgUserAuthRequest};
+use crate::channel::{
+    SshMsgChannelClose, SshMsgChannelData, SshMsgChannelEof, SshMsgChannelOpenConfirm,
+    SshMsgChannelOpenReq, SshMsgChannelReq, SshMsgChannelSuccess, SshMsgChannelWindowAdjust,
+    SshMsgGlobalRequest,
+};
+use crate::disconnect::SshMsgDisconnect;
 use crate::kex::{DerivedKeys, KexEcdhInitMsg, KexEcdhReplyMsg, MAC_VAL_LEN, get_nonce};
 use aes_gcm::aead::Aead;
 use aes_gcm::{AeadInPlace, Aes128Gcm, Key, KeyInit, Nonce, Tag};
@@ -281,6 +287,16 @@ pub enum SSHPacketData {
     SshMsgServiceAccept(ServiceRequestType),
     SshMsgUserAuthRequest(SshMsgUserAuthRequest),
     SshMsgUserAuthSuccess,
+    SshMsgChannelOpen(SshMsgChannelOpenReq),
+    SshMsgChannelOpenConfirmation(SshMsgChannelOpenConfirm),
+    SshMsgGlobalRequest(SshMsgGlobalRequest),
+    SshMsgChannelData(SshMsgChannelData),
+    SshMsgChannelClose(SshMsgChannelClose),
+    SshMsgChannelRequest(SshMsgChannelReq),
+    SshMsgChannelSuccess(SshMsgChannelSuccess),
+    SshMsgChannelWindowAdjust(SshMsgChannelWindowAdjust),
+    SshMsgDisconnect(SshMsgDisconnect),
+    SshMsgChannelEof(SshMsgChannelEof),
 }
 
 impl SSHPacketData {
@@ -306,6 +322,36 @@ impl SSHPacketData {
             }
             SSHPacketType::SshMsgUserAuthRequest => unreachable!(),
             SSHPacketType::SshMsgUserAuthSuccess => SSHPacketData::SshMsgUserAuthSuccess,
+            SSHPacketType::SshMsgChannelOpen => unreachable!(),
+            SSHPacketType::SshMsgChannelOpenConfirmation => {
+                SSHPacketData::SshMsgChannelOpenConfirmation(SshMsgChannelOpenConfirm::from_bytes(
+                    &data[1..],
+                )?)
+            }
+            SSHPacketType::SshMsgGlobalRequest => {
+                SSHPacketData::SshMsgGlobalRequest(SshMsgGlobalRequest::from_bytes(&data[1..])?)
+            }
+            SSHPacketType::SshMsgChannelData => {
+                SSHPacketData::SshMsgChannelData(SshMsgChannelData::from_bytes(&data[1..])?)
+            }
+            SSHPacketType::SshMsgChannelClose => {
+                SSHPacketData::SshMsgChannelClose(SshMsgChannelClose::from_bytes(&data[1..])?)
+            }
+            SSHPacketType::SshMsgChannelRequest => {
+                SSHPacketData::SshMsgChannelRequest(SshMsgChannelReq::from_bytes(&data[1..])?)
+            }
+            SSHPacketType::SshMsgChannelSuccess => {
+                SSHPacketData::SshMsgChannelSuccess(SshMsgChannelSuccess::from_bytes(&data[1..])?)
+            }
+            SSHPacketType::SshMsgChannelWindowAdjust => SSHPacketData::SshMsgChannelWindowAdjust(
+                SshMsgChannelWindowAdjust::from_bytes(&data[1..])?,
+            ),
+            SSHPacketType::SshMsgDisconnect => {
+                SSHPacketData::SshMsgDisconnect(SshMsgDisconnect::from_bytes(&data[1..])?)
+            }
+            SSHPacketType::SshMsgChannelEof => {
+                SSHPacketData::SshMsgChannelEof(SshMsgChannelEof::from_bytes(&data[1..])?)
+            }
         })
     }
 
@@ -331,19 +377,31 @@ impl SSHPacketData {
             SSHPacketData::SshMsgUserAuthSuccess => {
                 vec![SSHPacketType::SshMsgUserAuthSuccess as u8]
             }
+            SSHPacketData::SshMsgChannelOpen(packet) => packet.to_bytes(),
+            SSHPacketData::SshMsgChannelOpenConfirmation(_) => unreachable!(),
+            SSHPacketData::SshMsgGlobalRequest(_) => unreachable!(),
+            SSHPacketData::SshMsgChannelData(_) => unreachable!(),
+            SSHPacketData::SshMsgChannelClose(_) => unreachable!(),
+            SSHPacketData::SshMsgChannelRequest(req) => req.to_bytes(),
+            SSHPacketData::SshMsgChannelSuccess(_) => unreachable!(),
+            SSHPacketData::SshMsgChannelWindowAdjust(req) => req.to_bytes(),
+            SSHPacketData::SshMsgDisconnect(disconnect) => disconnect.to_bytes(),
+            SSHPacketData::SshMsgChannelEof(_) => unreachable!(),
         }
     }
 
     pub fn get_kex_ecdh_reply(&self) -> &KexEcdhReplyMsg {
         match self {
             SSHPacketData::SshMsgKexEcdhReply(x) => x,
-            SSHPacketData::SshMsgKexInit(_)
-            | SSHPacketData::SshMsgKexEcdhInit(_)
-            | SSHPacketData::SshMsgNewKeys
-            | SSHPacketData::SshMsgServiceRequest(_)
-            | SSHPacketData::SshMsgServiceAccept(_)
-            | SSHPacketData::SshMsgUserAuthRequest(_)
-            | SSHPacketData::SshMsgUserAuthSuccess => unreachable!(),
+            _ => unreachable!(),
+        }
+    }
+
+    // Returns server channel
+    pub fn get_recipient_channel(&self) -> u32 {
+        match self {
+            SSHPacketData::SshMsgChannelOpenConfirmation(resp) => resp.sender_channel,
+            _ => unreachable!(),
         }
     }
 }
@@ -351,6 +409,7 @@ impl SSHPacketData {
 #[derive(Debug, Clone, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum SSHPacketType {
+    SshMsgDisconnect = 1,
     SshMsgServiceRequest = 5,
     SshMsgServiceAccept = 6,
     SshMsgKexInit = 20,
@@ -359,6 +418,15 @@ pub enum SSHPacketType {
     SshMsgKexEcdhReply = 31,
     SshMsgUserAuthRequest = 50,
     SshMsgUserAuthSuccess = 52,
+    SshMsgGlobalRequest = 80,
+    SshMsgChannelOpen = 90,
+    SshMsgChannelOpenConfirmation = 91,
+    SshMsgChannelWindowAdjust = 93,
+    SshMsgChannelData = 94,
+    SshMsgChannelEof = 96,
+    SshMsgChannelClose = 97,
+    SshMsgChannelRequest = 98,
+    SshMsgChannelSuccess = 99,
 }
 
 /// Key exchange begins by each side sending the following packet:

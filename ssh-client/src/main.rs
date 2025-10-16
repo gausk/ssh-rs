@@ -1,7 +1,11 @@
 use anyhow::Result;
 use ssh_client::auth::{ServiceRequestType, SshMsgUserAuthRequest};
+use ssh_client::channel::{
+    RequestType, SshMsgChannelOpenReq, SshMsgChannelReq, SshMsgChannelWindowAdjust,
+};
+use ssh_client::disconnect::SshMsgDisconnect;
 use ssh_client::kex::{
-    DerivedKeys, KexEcdhInitMsg, calculate_exchange_hash, calculate_shared_secret,
+    DerivedKeys, KexEcdhInitMsg, MAC_VAL_LEN, calculate_exchange_hash, calculate_shared_secret,
     generate_kex_pair,
 };
 use ssh_client::read::read_exact;
@@ -9,6 +13,8 @@ use ssh_client::ssh::{KexInitMsg, SSHPacket, SSHPacketData};
 use std::env;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::thread::sleep;
+use std::time::Duration;
 use tracing::{info, subscriber};
 use tracing_subscriber::FmtSubscriber;
 
@@ -165,11 +171,109 @@ fn main() -> Result<()> {
     stream.flush()?;
     seq_out += 1;
 
-    // 11. Recv SSH_MSG_USERAUTH_SUCCESS
+    // 12. Recv SSH_MSG_USERAUTH_SUCCESS
     let rlen = stream.read(&mut buf)?;
     let auth_resp = SSHPacket::from_encrypted_bytes(&mut buf[..rlen], &all_keys, seq_in)?;
     seq_in += 1;
     info!("Recv auth response: {:?}", auth_resp);
+
+    // 13. Send SSH_MSG_CHANNEL_OPEN
+    let channel_open_req = SSHPacket::from_payload(
+        SSHPacketData::SshMsgChannelOpen(SshMsgChannelOpenReq::default()),
+        true,
+    );
+    info!("channel open req: {:?}", channel_open_req);
+    stream.write_all(&channel_open_req.to_encrypted_bytes(&all_keys, seq_out)?)?;
+    stream.flush()?;
+    seq_out += 1;
+
+    // 14. Recv SSH_MSG_CHANNEL_OPEN_CONFIRMATION
+    let recipient_channel: u32;
+    loop {
+        let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
+        let recv_packet = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
+        seq_in += 1;
+        if let SSHPacketData::SshMsgChannelOpenConfirmation(_) = recv_packet.payload {
+            info!("Recv channel open confirmation: {:?}", recv_packet);
+            recipient_channel = recv_packet.payload.get_recipient_channel();
+            break;
+        } else {
+            info!("Recv msg from server: {:?}", recv_packet);
+        }
+        sleep(Duration::from_secs(1));
+    }
+
+    // 15. Send SSH_MSG_CHANNEL_WINDOW_ADJUST
+    let channel_window_adjust = SSHPacket::from_payload(
+        SSHPacketData::SshMsgChannelWindowAdjust(SshMsgChannelWindowAdjust::new(recipient_channel)),
+        true,
+    );
+    info!("send channel_window_adjust: {:?}", channel_window_adjust);
+    stream.write_all(&channel_window_adjust.to_encrypted_bytes(&all_keys, seq_out)?)?;
+    stream.flush()?;
+    seq_out += 1;
+
+    // 16. Send SSH_MSG_CHANNEL_REQUEST
+    let channel_req = SSHPacket::from_payload(
+        SSHPacketData::SshMsgChannelRequest(SshMsgChannelReq::new(
+            recipient_channel,
+            RequestType::from_exec("ls -ltr", true),
+        )),
+        true,
+    );
+    info!("channel req: {:?}", channel_req);
+    stream.write_all(&channel_req.to_encrypted_bytes(&all_keys, seq_out)?)?;
+    stream.flush()?;
+    seq_out += 1;
+
+    // 17. Recv SSH_MSG_CHANNEL_WINDOW_ADJUST
+    let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
+    let recv_channel_window_adjust = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
+    info!(
+        "Recv channel_window_adjust: {:?}",
+        recv_channel_window_adjust
+    );
+    seq_in += 1;
+
+    // 18. Recv SSH_MSG_CHANNEL_SUCCESS
+    let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
+    let channel_req_suc = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
+    info!("Recv channel success: {:?}", channel_req_suc);
+    seq_in += 1;
+
+    // 19. Recv SSH_MSG_CHANNEL_DATA
+    let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
+    let channel_data = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
+    info!("Recv channel data: {:?}", channel_data);
+    seq_in += 1;
+
+    // 20. Recv SSH_MSG_CHANNEL_EOF
+    let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
+    let channel_eof = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
+    info!("Recv channel eof: {:?}", channel_eof);
+    seq_in += 1;
+
+    // 21. Recv SSH_MSG_CHANNEL_REQUEST with exit-status
+    let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
+    let recv_channel_req = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
+    info!("Recv recv_channel_req: {:?}", recv_channel_req);
+    seq_in += 1;
+
+    // 22 Recv SSH_MSG_CHANNEL_CLOSE
+    let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
+    let channel_close = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
+    info!("Recv msg channel close: {:?}", channel_close);
+    seq_in += 1;
+
+    // 23 Send SSH_MSG_DISCONNECT
+    let disconnect = SSHPacket::from_payload(
+        SSHPacketData::SshMsgDisconnect(SshMsgDisconnect::default()),
+        true,
+    );
+    info!("Send ssh disconnect: {:?}", disconnect);
+    stream.write_all(&disconnect.to_encrypted_bytes(&all_keys, seq_out)?)?;
+    stream.flush()?;
+    seq_out += 1;
 
     info!("Encrypted packet sent {}", seq_out);
     info!("Encrypted packet received {}", seq_in);
