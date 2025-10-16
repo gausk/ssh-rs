@@ -1,6 +1,6 @@
-use std::fmt::{Debug, Formatter};
 use crate::ssh::SSHPacketType;
 use anyhow::{Result, anyhow, bail};
+use std::fmt::{Debug, Formatter};
 use tracing::{info, warn};
 
 /// RFC 4254

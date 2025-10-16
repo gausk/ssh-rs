@@ -1,7 +1,7 @@
-use std::fmt::Debug;
 use crate::ssh::SSHPacketType;
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 /// After the key exchange, the client requests a service.  The service
 /// is identified by a name. Currently, the following names have been reserved:
@@ -118,12 +118,11 @@ pub enum AuthMethod {
 impl Debug for AuthMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AuthMethod::Password { change_request, .. } => {
-                f.debug_struct("AuthMethod::Password")
-                    .field("change_request", change_request)
-                    .field("password", &"******")
-                    .finish()
-            }
+            AuthMethod::Password { change_request, .. } => f
+                .debug_struct("AuthMethod::Password")
+                .field("change_request", change_request)
+                .field("password", &"******")
+                .finish(),
         }
     }
 }
