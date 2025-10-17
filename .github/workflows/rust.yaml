@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,21 +12,22 @@ env:
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
       - name: Check formatting
         run: cargo fmt -- --check
-      - name: Lint with clippy
+      - name: Lint with Clippy
         run: cargo clippy --workspace -- -D warnings
       - name: Build all crates
         run: cargo build --workspace --verbose --release
-      - name: Run all labs
+      - name: Run all binaries
         run: |
           for crate in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
             echo "Running $crate..."
-            cargo run -p "$crate" --release || true
+            cargo run -p "$crate" --release
           done
       - name: Run all tests
-        run: cargo test --workspace --verbose --release || true
+        run: cargo test --workspace --verbose --release
