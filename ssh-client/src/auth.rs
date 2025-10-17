@@ -1,6 +1,5 @@
 use crate::ssh::SSHPacketType;
 use anyhow::{Result, anyhow, bail};
-use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 /// After the key exchange, the client requests a service.  The service
@@ -43,7 +42,7 @@ impl ServiceRequestType {
             bail!("data too short for string length");
         }
 
-        let s = std::str::from_utf8(&data[4..4 + len]).map_err(|e| anyhow!("invalid UTF-8"))?;
+        let s = std::str::from_utf8(&data[4..4 + len]).map_err(|_| anyhow!("invalid UTF-8"))?;
 
         match s {
             "ssh-userauth" => Ok(ServiceRequestType::SshUserauth),
@@ -82,9 +81,9 @@ pub struct SshMsgUserAuthRequest {
 }
 
 impl SshMsgUserAuthRequest {
-    pub fn from_user_password(username: String, password: String) -> Self {
+    pub fn from_user_password(username: &str, password: String) -> Self {
         Self {
-            username,
+            username: username.to_string(),
             service_name: ServiceRequestType::SshConnection,
             method: AuthMethod::Password {
                 change_request: false,

@@ -6,13 +6,10 @@ use crate::channel::{
 };
 use crate::disconnect::SshMsgDisconnect;
 use crate::kex::{DerivedKeys, KexEcdhInitMsg, KexEcdhReplyMsg, MAC_VAL_LEN, get_nonce};
-use aes_gcm::aead::Aead;
 use aes_gcm::{AeadInPlace, Aes128Gcm, Key, KeyInit, Nonce, Tag};
 use anyhow::{Result, anyhow, bail};
 use num_enum::TryFromPrimitive;
 use rand::{Rng, rng};
-use tracing::info;
-use tracing_subscriber::fmt::FormatFields;
 
 /// Binary Packet Protocol
 ///

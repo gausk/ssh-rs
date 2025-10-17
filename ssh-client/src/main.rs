@@ -1,4 +1,5 @@
 use anyhow::Result;
+use clap::Parser;
 use ssh_client::auth::{ServiceRequestType, SshMsgUserAuthRequest};
 use ssh_client::channel::{
     RequestType, SshMsgChannelOpenReq, SshMsgChannelReq, SshMsgChannelWindowAdjust,
@@ -10,7 +11,6 @@ use ssh_client::kex::{
 };
 use ssh_client::read::read_exact;
 use ssh_client::ssh::{KexInitMsg, SSHPacket, SSHPacketData};
-use std::env;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread::sleep;
@@ -39,21 +39,31 @@ fn dump_vec(label: &str, data: &[u8]) {
     );
 }
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct Args {
+    #[clap(short, long, default_value = "127.0.0.1")]
+    server_ip: String,
+    #[clap(short, long, default_value = "22")]
+    port: u16,
+    #[clap(short, long, default_value = "gautamkumar")]
+    username: String,
+}
+
 fn main() -> Result<()> {
     subscriber::set_global_default(FmtSubscriber::new())?;
-    let mut stream = TcpStream::connect("127.0.0.1:22")?;
-    info!("Connected to the server");
-    let args = env::args().collect::<Vec<_>>();
-    if args.len() < 2 {
-        info!("Usage: {} <password>", args[0]);
-        std::process::exit(1);
-    }
+    let args = Args::parse();
+
+    let mut stream = TcpStream::connect(format!("{}:{}", args.server_ip, args.port))?;
+    info!(
+        "Connected to the server at ip: {} and port: {}",
+        args.server_ip, args.port
+    );
     let mut buf = [0; 4096];
     // 1. When the connection has been established, both sides MUST send an identification
     // string of form SSH-protoversion-softwareversion SP comments CR LF
     let rlen = stream.read(&mut buf)?;
     let server_ident = buf[..rlen - 2].to_vec();
-    dump_vec("server", &server_ident);
     info!(
         "Server identification string: {}",
         String::from_utf8_lossy(&server_ident)
@@ -63,18 +73,18 @@ fn main() -> Result<()> {
     stream.flush()?;
     // remove \r\n
     client_ident = &client_ident[..client_ident.len() - 2];
-    dump_vec("client_id", client_ident);
+    dump_vec("Client identification string", client_ident);
 
     // 2. SSH_MSG_KEXINIT
     let rlen = stream.read(&mut buf)?;
     let server_kex_init = SSHPacket::from_bytes(&buf[..rlen])?;
     info!("Server KEXINIT: {:?}", server_kex_init);
     let server_kex_init_payload = server_kex_init.payload.to_bytes();
-    dump_vec("server_kex_init", &server_kex_init_payload);
+
     let client_kex_init =
         SSHPacket::from_payload(SSHPacketData::SshMsgKexInit(KexInitMsg::default()), false);
     let client_kex_init_payload = client_kex_init.payload.to_bytes();
-    dump_vec("client_kex_init", &client_kex_init_payload);
+    info!("Client KEXINIT {:?}", client_kex_init);
     stream.write_all(&client_kex_init.to_bytes())?;
     stream.flush()?;
 
@@ -85,19 +95,20 @@ fn main() -> Result<()> {
         SSHPacketData::SshMsgKexEcdhInit(KexEcdhInitMsg::new(&client_pubkey)),
         false,
     );
+    info!("Client KEX_ECDH_INIT {:?}", kex_ecdh_init);
     stream.write_all(&kex_ecdh_init.to_bytes())?;
     stream.flush()?;
 
     // 4. SSH_MSG_KEX_ECDH_REPLY
     let ecdh_reply_buf = read_exact(&mut stream, 0)?;
     let ecdh_reply = SSHPacket::from_bytes(&ecdh_reply_buf)?;
+    info!("Server ECDH_REPLY: {:?}", ecdh_reply);
     let reply_msg = ecdh_reply.payload.get_kex_ecdh_reply();
     let server_phk = reply_msg.host_key.as_ref();
     let server_ephemral_pk = reply_msg.server_pubkey.as_ref();
     dump_vec("server_ephemeral", server_ephemral_pk);
     dump_vec("client_ephemeral", &client_pubkey);
     dump_vec("host_key", server_phk);
-    info!("ECHDH reply: {:?}", ecdh_reply);
 
     // 5. TODO: Verify received keys are valid.
 
@@ -128,12 +139,13 @@ fn main() -> Result<()> {
 
     // 8. Send and recv SSH2_MSG_NEWKEYS
     let ssh_msg_new_keys = SSHPacket::from_payload(SSHPacketData::SshMsgNewKeys, false);
+    info!("Client SSH2_MSG_NEWKEYS: {:?}", ssh_msg_new_keys);
     stream.write_all(&ssh_msg_new_keys.to_bytes())?;
     stream.flush()?;
 
     let rlen = stream.read(&mut buf)?;
     let server_ssh_msg_new_keys = SSHPacket::from_bytes(&buf[..rlen])?;
-    info!("server SSH2_MSG_NEWKEYS: {:?}", server_ssh_msg_new_keys);
+    info!("Server SSH2_MSG_NEWKEYS: {:?}", server_ssh_msg_new_keys);
 
     // 9. Send SSH_MSG_SERVICE_REQUEST
     // seq_out is encrypted packet sent count
@@ -141,6 +153,10 @@ fn main() -> Result<()> {
     let client_ssh_service_request = SSHPacket::from_payload(
         SSHPacketData::SshMsgServiceRequest(ServiceRequestType::SshUserauth),
         true,
+    );
+    info!(
+        "Client SSH2_MSG_SERVICE_REQUEST {:?}",
+        client_ssh_service_request
     );
     stream.write_all(&client_ssh_service_request.to_encrypted_bytes(&all_keys, seq_out)?)?;
     stream.flush()?;
@@ -158,11 +174,13 @@ fn main() -> Result<()> {
         server_ssh_msg_service_accept
     );
 
+    let password = rpassword::prompt_password("Your password: ")?;
+
     // 11. Send SSH_MSG_USERAUTH_REQUEST
     let client_auth_req = SSHPacket::from_payload(
         SSHPacketData::SshMsgUserAuthRequest(SshMsgUserAuthRequest::from_user_password(
-            "gautamkumar".to_string(),
-            args[1].clone(),
+            args.username.as_str(),
+            password,
         )),
         true,
     );
@@ -182,7 +200,7 @@ fn main() -> Result<()> {
         SSHPacketData::SshMsgChannelOpen(SshMsgChannelOpenReq::default()),
         true,
     );
-    info!("channel open req: {:?}", channel_open_req);
+    info!("Client channel open req: {:?}", channel_open_req);
     stream.write_all(&channel_open_req.to_encrypted_bytes(&all_keys, seq_out)?)?;
     stream.flush()?;
     seq_out += 1;
@@ -208,7 +226,7 @@ fn main() -> Result<()> {
         SSHPacketData::SshMsgChannelWindowAdjust(SshMsgChannelWindowAdjust::new(recipient_channel)),
         true,
     );
-    info!("send channel_window_adjust: {:?}", channel_window_adjust);
+    info!("Client channel_window_adjust: {:?}", channel_window_adjust);
     stream.write_all(&channel_window_adjust.to_encrypted_bytes(&all_keys, seq_out)?)?;
     stream.flush()?;
     seq_out += 1;
@@ -221,7 +239,7 @@ fn main() -> Result<()> {
         )),
         true,
     );
-    info!("channel req: {:?}", channel_req);
+    info!("Client msg channel req: {:?}", channel_req);
     stream.write_all(&channel_req.to_encrypted_bytes(&all_keys, seq_out)?)?;
     stream.flush()?;
     seq_out += 1;
@@ -256,7 +274,7 @@ fn main() -> Result<()> {
     // 21. Recv SSH_MSG_CHANNEL_REQUEST with exit-status
     let mut data = read_exact(&mut stream, MAC_VAL_LEN)?;
     let recv_channel_req = SSHPacket::from_encrypted_bytes(&mut data, &all_keys, seq_in)?;
-    info!("Recv recv_channel_req: {:?}", recv_channel_req);
+    info!("Recv msg_channel_req: {:?}", recv_channel_req);
     seq_in += 1;
 
     // 22 Recv SSH_MSG_CHANNEL_CLOSE

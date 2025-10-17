@@ -1,7 +1,7 @@
 use crate::ssh::SSHPacketType;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use std::fmt::{Debug, Formatter};
-use tracing::{info, warn};
+use tracing::warn;
 
 /// RFC 4254
 /// Opening a Channel
@@ -134,6 +134,9 @@ impl SshMsgGlobalRequest {
             bail!("SshMsgGlobalRequest: buffer too short");
         }
         let request_name = String::from_utf8_lossy(&buf[4..4 + request_name_len]).to_string();
+        if buf[4 + request_name_len] > 1 {
+            bail!("SshMsgGlobalRequest: want_reply should be either 0 or 1");
+        }
         let want_reply = buf[4 + request_name_len] != 0;
 
         let request_specific = if buf.len() == 4 + request_name_len + 1 {
@@ -203,7 +206,6 @@ impl SshMsgChannelReq {
         if buf.len() < 4 {
             bail!("SshMsgChannelReq: buffer too short");
         }
-        let mut offset = 0;
         let recipient_channel = u32::from_be_bytes(buf[..4].try_into()?);
         let request_type = RequestType::from_bytes(&buf[4..])?;
         Ok(Self {
@@ -235,14 +237,14 @@ impl RequestType {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
+        let req_type = self.as_str().as_bytes();
+        buf.extend((req_type.len() as u32).to_be_bytes());
+        buf.extend_from_slice(req_type);
         match self {
             RequestType::Exec {
                 command,
                 want_reply,
             } => {
-                let req_type = self.as_str().as_bytes();
-                buf.extend((req_type.len() as u32).to_be_bytes());
-                buf.extend_from_slice(req_type);
                 buf.push(*want_reply as u8);
                 let cmd = command.as_bytes();
                 buf.extend((cmd.len() as u32).to_be_bytes());
@@ -252,9 +254,6 @@ impl RequestType {
                 want_reply,
                 status_code,
             } => {
-                let req_type = self.as_str().as_bytes();
-                buf.extend((req_type.len() as u32).to_be_bytes());
-                buf.extend_from_slice(req_type);
                 buf.push(*want_reply as u8);
                 buf.extend(status_code.to_be_bytes());
             }
@@ -353,7 +352,7 @@ pub struct SshMsgChannelData {
 impl Debug for SshMsgChannelData {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         // Escape newlines and other control chars
-        let mut pretty_data = self
+        let pretty_data = self
             .data
             .replace("\\r", "\r")
             .replace("\\n", "\n")

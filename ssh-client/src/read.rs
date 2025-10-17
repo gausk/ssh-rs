@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::io::Read;
 use std::net::TcpStream;
-use tracing::info;
 
 pub fn read_exact(stream: &mut TcpStream, mac_len: usize) -> Result<Vec<u8>> {
     let mut packet_len = [0u8; 4];
