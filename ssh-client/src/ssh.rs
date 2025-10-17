@@ -17,9 +17,9 @@ use rand::{Rng, rng};
 ///
 /// uint32    packet_length
 /// byte      padding_length
-/// byte[n1]  payload; n1 = packet_length - padding_length - 1
-/// byte[n2]  random padding; n2 = padding_length
-/// byte[m]   mac (Message Authentication Code - MAC); m = mac_length
+/// byte`[`n1`]`  payload; n1 = packet_length - padding_length - 1
+/// byte`[`n2`]`  random padding; n2 = padding_length
+/// byte`[`m`]`   mac (Message Authentication Code - MAC); m = mac_length
 ///
 /// packet_length
 /// The length of the packet in bytes, not including 'mac' or the
@@ -45,6 +45,7 @@ use rand::{Rng, rng};
 /// Message Authentication Code.  If message authentication has
 /// been negotiated, this field contains the MAC bytes.  Initially,
 /// the MAC algorithm MUST be "none".
+/// ```struct
 /// SSHPacket {
 ///     packet_length: 1164,
 ///     padding_length: 10,
@@ -121,6 +122,7 @@ use rand::{Rng, rng};
 ///     padding: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ///     mac: []
 /// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct SSHPacket {
     packet_length: u32,
@@ -238,7 +240,7 @@ impl SSHPacket {
 
     /// RFC 5647 (Sec 7.2)
     /// In AES-GCM secure shell, the inputs to the authenticated encryption are:
-    ///
+    ///```text
     ///      PT (Plain Text)
     ///         byte      padding_length; // 4 <= padding_length < 256
     ///         byte[n1]  payload;        // n1 = packet_length-padding_length-1
@@ -249,8 +251,8 @@ impl SSHPacket {
     ///         As described in section 7.1.
     ///      BK (Block Cipher Key)
     ///         The appropriate Encryption Key formed during the Key Exchange.
-    ///
-    /// As required in [RFC4253], the random_padding MUST be at least 4
+    ///```
+    /// As required in `[`RFC4253`]`, the random_padding MUST be at least 4
     /// octets in length but no more than 255 octets.  The total length of
     /// the PT MUST be a multiple of 16 octets (the block size of AES).  The
     /// binary packet is the concatenation of the 4-octet packet_length, the
@@ -429,7 +431,7 @@ pub enum SSHPacketType {
 /// Key exchange begins by each side sending the following packet:
 ///
 /// byte         SSH_MSG_KEXINIT
-/// byte[16]     cookie (random bytes)
+/// byte`[`16`]`     cookie (random bytes)
 /// name-list    kex_algorithms
 /// name-list    server_host_key_algorithms
 /// name-list    encryption_algorithms_client_to_server

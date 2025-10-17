@@ -58,7 +58,7 @@ impl ServiceRequestType {
 /// the authentication method.
 ///
 /// byte      SSH_MSG_USERAUTH_REQUEST
-/// string    user name in ISO-10646 UTF-8 encoding [RFC3629]
+/// string    user name in ISO-10646 UTF-8 encoding `[`RFC3629`]`
 /// string    service name in US-ASCII
 /// string    method name in US-ASCII
 /// ....      method specific fields

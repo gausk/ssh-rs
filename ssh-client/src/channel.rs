@@ -172,12 +172,13 @@ impl SshMsgGlobalRequest {
 /// commands.
 ///
 /// The client MAY ignore these messages.
-///
+///```text
 ///      byte      SSH_MSG_CHANNEL_REQUEST
 ///      uint32    recipient channel
 ///      string    "exit-status"
 ///      boolean   FALSE
 ///      uint32    exit_status
+/// ```
 #[derive(Clone, Debug)]
 pub struct SshMsgChannelReq {
     pub recipient_channel: u32,

@@ -13,7 +13,7 @@ pub const MAC_KEY_LEN: usize = 32;
 pub const MAC_VAL_LEN: usize = 16;
 
 /// The following is an overview of the key exchange process:
-///
+///```text
 /// Client                                                Server
 /// ------                                                ------
 /// Generate ephemeral key pair.
@@ -30,12 +30,12 @@ pub const MAC_VAL_LEN: usize = 16;
 /// Compute shared secret.
 /// Generate exchange hash.
 /// Verify server's signature.
-///
+///```
 /// It is RECOMMENDED that the client verify that the host key sent
 /// is the server's host key (for example, using a local database).
 /// The client MAY accept the host key without verification, but
 /// doing so will render the protocol insecure against active
-/// attacks; see the discussion in Section 4.1 of [RFC4251].
+/// attacks; see the discussion in Section 4.1 of `[`RFC4251`]`.
 ///
 pub fn generate_kex_pair() -> (EphemeralSecret, Box<[u8]>) {
     let secret = EphemeralSecret::random(&mut OsRng);
@@ -307,10 +307,10 @@ impl DerivedKeys {
 ///    fixed field and an 8-octet invocation counter field.  The invocation
 ///    field is treated as a 64-bit integer and is incremented after each
 ///    invocation of AES-GCM to process a binary packet.
-///
+///```text
 ///          uint32  fixed;                  // 4 octets
 ///          uint64  invocation_counter;     // 8 octets
-///
+///```
 pub fn get_nonce(iv: &[u8], seq_no: u64) -> Result<Vec<u8>> {
     let mut nonce = Vec::new();
     nonce.extend_from_slice(&iv[..4]);

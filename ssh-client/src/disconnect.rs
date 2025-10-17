@@ -5,8 +5,8 @@ use anyhow::{Result, bail};
 ///
 /// byte      SSH_MSG_DISCONNECT
 /// uint32    reason code
-/// string    description in ISO-10646 UTF-8 encoding [RFC3629]
-/// string    language tag [RFC3066]
+/// string    description in ISO-10646 UTF-8 encoding `[`RFC3629`]`
+/// string    language tag `[`RFC3066`]`
 ///
 /// This message causes immediate termination of the connection.  All
 /// implementations MUST be able to process this message; they SHOULD be

@@ -31,3 +31,12 @@ jobs:
           done
       - name: Run all tests
         run: cargo test --workspace --verbose --release
+      - name: Run all examples
+        run: |
+            echo "Running all examples..."
+            for example in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].targets[] | select(.kind[] == "example") | .name'); do
+              echo "Running example: $example"
+              cargo run --example "$example" --release || echo "Failed to run example $example"
+            done
+      - name: Generate documentation
+        run: cargo doc --workspace --no-deps --release
