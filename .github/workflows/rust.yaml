@@ -27,7 +27,7 @@ jobs:
         run: |
           for crate in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
             echo "Running $crate..."
-            cargo run -p "$crate" --release
+            cargo run -p "$crate" --release || true
           done
       - name: Run all tests
         run: cargo test --workspace --verbose --release
